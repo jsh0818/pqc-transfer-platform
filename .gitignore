@@ -1,0 +1,54 @@
+# ---- 비밀값 (절대 커밋 금지) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+secrets/
+credentials*.json
+
+# ---- Java / Gradle / Maven ----
+build/
+target/
+.gradle/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+hs_err_pid*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- Node / React ----
+node_modules/
+dist/
+.next/
+coverage/
+
+# ---- 대용량 모델·데이터 (다운로드 스크립트와 README만 커밋) ----
+tools/diagnosis/models/
+tools/diagnosis/data/raw/
+*.bin
+*.safetensors
+*.pt
+
+# ---- 부하 테스트 결과 원본 (요약 보고서만 docs/ 에 커밋) ----
+loadtest/results/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---- 로컬 인프라 데이터 ----
+infra/**/data/
+*.log
