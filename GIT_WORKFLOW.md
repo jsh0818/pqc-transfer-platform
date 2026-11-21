@@ -1,4 +1,43 @@
-# Git 협업 규칙
+# Git 협업 규칙 (간단 버전)
+
+친구 둘이 같이 하는 팀플이라 최소한만 정했다. 헷갈리면 이 페이지만 보면 된다.
+
+## 꼭 지킬 5가지
+
+1. **`main`, `develop`에는 직접 push하지 않는다.** `feat/...` 브랜치에서 작업하고 PR로 합친다.
+2. **작업 시작 전에 `git pull`부터 한다.** 상대가 올린 걸 먼저 받아야 충돌이 안 난다.
+3. **같은 파일을 동시에 고치지 않는다.** 각자 맡은 폴더만 만진다. 공용 파일(`docs/api`, `docs/erd`, `infra`)을 고칠 때는 상대에게 한마디 한다.
+4. **비밀번호·API 키·`.pem`·`.env`는 절대 올리지 않는다.** 실수로 올렸다면 바로 키를 폐기하고 재발급한다.
+5. **커밋 메시지는 뭘 했는지 알아볼 수 있게만 쓴다.** 예: `feat: RSA 탐지 규칙 추가`
+
+## 작업 순서 (복붙용)
+
+```bash
+git switch develop
+git pull
+git switch -c feat/diagnosis-rsa-rule     # 브랜치 이름: feat/영역-내용
+# 작업 후
+git add .
+git commit -m "feat: RSA 탐지 규칙 추가"
+git push -u origin feat/diagnosis-rsa-rule
+# GitHub에서 develop 대상으로 PR 만들고 Merge
+```
+
+- 브랜치 이름 예: `feat/ledger-double-entry`, `fix/transfer-idempotency`, `docs/threat-model`
+- 커밋 앞말: `feat`(기능) `fix`(버그) `docs`(문서) `test`(테스트) `chore`(설정)
+- 병합 후 브랜치는 지운다.
+
+## 우리끼리 정할 것 (대화로 정하면 됨)
+
+- 상대 PR을 꼭 승인해야 병합할지, 알림만 주고 병합해도 될지: **현재 승인 0명(알림만)**
+- 서로 리뷰는 시간 날 때 하고, 시험 기간에는 늦어도 괜찮다.
+- 주 1회 정도 `develop`이 빌드되는지 같이 확인한다.
+
+---
+
+# 참고용: 자세한 규칙 (안 읽어도 됨)
+
+아래는 포트폴리오·면접용으로 더 엄격하게 쓸 때의 규칙이다. 필요할 때만 찾아본다.
 
 2인 팀이 12주 동안 충돌을 줄이고, 면접에서 "내가 한 일"을 증명할 수 있게 하는 규칙이다.
 
@@ -94,7 +133,7 @@ perf(gateway): 세션 키 캐시 적용, HYBRID TPS 측정 결과를 본문에 �
 1. 저장소 생성 후 `main`, `develop` 브랜치를 만든다.
 2. Settings → Branches → Branch protection rule을 `main`과 `develop`에 각각 추가한다.
    - Require a pull request before merging 체크
-   - Required approvals: 1
+   - Required approvals: 0 (팀 합의로 1로 올릴 수 있음)
    - Require status checks to pass (CI 구성 후 체크 추가)
 3. Settings → General → Pull Requests에서 **Squash merging만 허용**하고 병합 후 브랜치 자동 삭제를 켠다.
 4. 기본 브랜치를 `develop`으로 바꾼다.
