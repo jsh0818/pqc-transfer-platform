@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: PQC 펌뱅킹 이체 API (초안 v0.1)
-  version: 0.1.0
+  title: PQC 펌뱅킹 이체 API (초안 v0.2)
+  version: 0.2.0
   description: |
     기업이 은행 게이트웨이에 이체를 요청하고, 결재자가 승인하는 API 계약이다.
     `docs/api/message-spec.md`(전문 규격)와 `docs/erd/erd.md`(DB)를 이 형식으로 옮겼다.
@@ -10,8 +10,19 @@ info:
     **서명 위치 결정**: HYBRID 서명(RSA + ML-DSA)은 base64로 약 4.8KB라서 HTTP 헤더 한도(보통 8KB)에
     가깝다. 그래서 보안 메타데이터는 헤더가 아니라 요청 본문의 `security` 객체에 둔다.
 
-    **서명 대상**: `security`에서 `signatures`를 뺀 부분과 `transfer`를 정규화(JSON 키 정렬, 공백 제거)한 바이트.
+    **서명 대상**: `security`에서 `signatures`를 뺀 부분과 `transfer`를 **RFC 8785(JCS)** 표준으로 정규화한 바이트.
+    정규화를 직접 구현하면 기업 쪽과 은행 쪽 결과가 달라질 수 있어서 표준 라이브러리를 쓴다.
     `crypto_mode`가 서명 대상에 들어가므로 중간에서 모드를 바꾸는 다운그레이드를 막을 수 있다.
+    금액(`amount`)은 소수점 오차를 피하려고 **문자열**로 주고받고, DB에는 정수로 저장한다.
+
+    **서명 형식**: 서명마다 `alg`(알고리즘)와 `kid`(키 번호)를 적는다. 키나 알고리즘을 교체해도
+    서버가 어떤 키로 검증할지 알 수 있다. HYBRID는 RSA와 ML-DSA **둘 다** 통과해야 성공이다.
+
+    **검증 순서**: ① 암호 모드 → ② 시간(5분) → ③ 서명 → ④ nonce 등록(10분 보관, Redis) → ⑤ 본문.
+    서명 확인 전에 nonce를 저장하면 가짜 요청이 번호를 선점해 정상 요청이 막힐 수 있어서, 서명 뒤에 등록한다.
+
+    **외부 응답 정책**: 결과 코드는 세분화하되, 보안 검사 실패(E1001~E1003)의 외부 `message`는 원인을 알려 주지 않는다.
+    상세 원인(어느 서명이 틀렸는지, 최저 모드가 무엇인지 등)은 내부 감사 로그에만 남긴다.
 
     이 명세는 복호화된 이후의 논리 구조를 설명한다. 전송 구간 암호화(키 교환, AES-256-GCM)는 이 범위 밖이다.
 
@@ -61,8 +72,10 @@ paths:
                 nonce: 9c1e5b7a2d4f6081
                 signatures:
                   - alg: RSA
+                    kid: acme-rsa-2026-01
                     value: BASE64_RSA_SIGNATURE
                   - alg: ML-DSA
+                    kid: acme-mldsa-2026-01
                     value: BASE64_ML_DSA_SIGNATURE
               transfer:
                 idempotency_key: ACME-20261123-000123
@@ -70,7 +83,7 @@ paths:
                 from_account_no: '1002345678901'
                 to_bank_code: '088'
                 to_account_no: '1109876543210'
-                amount: 1500000
+                amount: '1500000'
                 currency: KRW
                 memo: 11월 거래대금
                 requested_at: '2026-11-23T05:50:12Z'
@@ -206,11 +219,16 @@ components:
 
     Signature:
       type: object
-      required: [alg, value]
+      required: [alg, kid, value]
       properties:
         alg:
           type: string
           enum: [RSA, ML-DSA]
+        kid:
+          type: string
+          maxLength: 64
+          description: 서명에 쓴 키의 번호. 키를 교체해도 서버가 어떤 키로 검증할지 알 수 있다
+          example: acme-rsa-2026-01
         value:
           type: string
           description: base64 인코딩된 서명값
@@ -230,17 +248,17 @@ components:
         timestamp:
           type: string
           format: date-time
-          description: 서버 시각과 차이가 허용 범위(초안 5분)를 넘으면 거부
+          description: 서버 시각과 차이가 5분을 넘으면 거부(앞뒤 5분)
         nonce:
           type: string
           minLength: 16
-          description: 요청마다 새로 만드는 일회용 값. 이미 쓴 값이면 거부
+          description: 요청마다 새로 만드는 일회용 값. 서명 검증 뒤에 Redis에 10분간 보관하며, 이미 쓴 값이면 거부
           example: 9c1e5b7a2d4f6081
         signatures:
           type: array
           minItems: 1
           maxItems: 2
-          description: LEGACY는 RSA 1개, HYBRID는 RSA와 ML-DSA 둘 다, PQC는 ML-DSA 1개
+          description: LEGACY는 RSA 1개, HYBRID는 RSA와 ML-DSA 둘 다(하나라도 틀리면 거부), PQC는 ML-DSA 1개
           items:
             $ref: '#/components/schemas/Signature'
 
@@ -281,11 +299,10 @@ components:
           pattern: '^[0-9]{10,16}$'
           example: '1109876543210'
         amount:
-          type: integer
-          format: int64
-          minimum: 1
-          description: 원 단위 정수. 소수점 없음
-          example: 1500000
+          type: string
+          pattern: '^[1-9][0-9]{0,14}$'
+          description: 원 단위 정수를 문자열로 표현(앞자리 0 없음, 소수점 없음). 언어마다 큰 숫자 처리가 달라 서명이 어긋나는 것을 막는다. DB에는 정수로 저장
+          example: '1500000'
         currency:
           type: string
           enum: [KRW]
@@ -375,7 +392,8 @@ components:
           description: |
             E1000 형식 오류, E1001 서명 검증 실패, E1002 재전송 의심, E1003 허용되지 않은 암호 모드,
             E2002 잔액 부족, E2004 한도 초과, E2005 계좌 상태 이상, E2006 작성자와 승인자가 같음,
-            E2007 이미 처리된 이체(상태 불일치), E2008 이체를 찾을 수 없음, E9000 서버 내부 오류
+            E2007 이미 처리된 이체(상태 불일치), E2008 이체를 찾을 수 없음, E9000 서버 내부 오류.
+            E1001~E1003의 message는 원인을 알려 주지 않고, 상세 원인은 내부 감사 로그에만 남긴다.
         message:
           type: string
         transfer_id:
@@ -401,7 +419,7 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             result_code: E1001
-            message: 서명 검증에 실패했습니다
+            message: 요청을 확인할 수 없습니다
     Forbidden:
       description: 허용되지 않은 암호 모드(E1003) 또는 작성자와 승인자가 같음(E2006)
       content:
@@ -410,7 +428,7 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             result_code: E1003
-            message: 허용되지 않은 암호 모드입니다
+            message: 요청을 확인할 수 없습니다
     NotFound:
       description: 이체를 찾을 수 없음
       content:
