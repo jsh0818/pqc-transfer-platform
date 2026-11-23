@@ -1,0 +1,6 @@
+rules:
+  - id: rsa-keygen
+    pattern: KeyPairGenerator.getInstance("RSA")
+    message: RSA 키 생성 발견 (양자 취약)
+    languages: [java]
+    severity: ERROR
