@@ -1,0 +1,449 @@
+openapi: 3.0.3
+info:
+  title: PQC 펌뱅킹 이체 API (초안 v0.1)
+  version: 0.1.0
+  description: |
+    기업이 은행 게이트웨이에 이체를 요청하고, 결재자가 승인하는 API 계약이다.
+    `docs/api/message-spec.md`(전문 규격)와 `docs/erd/erd.md`(DB)를 이 형식으로 옮겼다.
+    W1 말 "계약 확정" 때 고정하고, 이후 변경은 PR과 ADR로 한다.
+
+    **서명 위치 결정**: HYBRID 서명(RSA + ML-DSA)은 base64로 약 4.8KB라서 HTTP 헤더 한도(보통 8KB)에
+    가깝다. 그래서 보안 메타데이터는 헤더가 아니라 요청 본문의 `security` 객체에 둔다.
+
+    **서명 대상**: `security`에서 `signatures`를 뺀 부분과 `transfer`를 정규화(JSON 키 정렬, 공백 제거)한 바이트.
+    `crypto_mode`가 서명 대상에 들어가므로 중간에서 모드를 바꾸는 다운그레이드를 막을 수 있다.
+
+    이 명세는 복호화된 이후의 논리 구조를 설명한다. 전송 구간 암호화(키 교환, AES-256-GCM)는 이 범위 밖이다.
+
+    **HTTP 상태와 결과 코드 대응**
+
+    | HTTP | result_code |
+    | --- | --- |
+    | 201 | 0000 (새로 접수) |
+    | 200 | E2001 (중복 요청, 기존 결과 반환) |
+    | 400 | E1000 (형식 오류) |
+    | 401 | E1001, E1002 |
+    | 403 | E1003, E2006 |
+    | 404 | E2008 |
+    | 409 | E2007 |
+    | 422 | E2002, E2004, E2005 |
+    | 500 | E9000 |
+servers:
+  - url: http://localhost:8080
+    description: 로컬 개발(게이트웨이). 배포 주소는 W8에 추가
+tags:
+  - name: transfers
+    description: 이체 요청과 조회
+  - name: approvals
+    description: 결재(승인·거절)
+
+paths:
+  /v1/transfers:
+    post:
+      tags: [transfers]
+      operationId: createTransfer
+      summary: 이체 요청
+      description: |
+        서명, 재전송, 암호 모드를 검사한 뒤 이체를 접수한다.
+        같은 `idempotency_key`로 다시 보내면 새로 처리하지 않고 기존 결과를 200으로 돌려준다.
+        승인이 필요한 금액이면 `PENDING_APPROVAL`로 접수된다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferEnvelope'
+            example:
+              security:
+                crypto_mode: HYBRID
+                session_id: s-7f3a9c21
+                timestamp: '2026-11-23T05:50:12Z'
+                nonce: 9c1e5b7a2d4f6081
+                signatures:
+                  - alg: RSA
+                    value: BASE64_RSA_SIGNATURE
+                  - alg: ML-DSA
+                    value: BASE64_ML_DSA_SIGNATURE
+              transfer:
+                idempotency_key: ACME-20261123-000123
+                corporation_id: 1001
+                from_account_no: '1002345678901'
+                to_bank_code: '088'
+                to_account_no: '1109876543210'
+                amount: 1500000
+                currency: KRW
+                memo: 11월 거래대금
+                requested_at: '2026-11-23T05:50:12Z'
+      responses:
+        '201':
+          description: 새로 접수됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+              example:
+                result_code: '0000'
+                message: 이체 요청이 접수되었습니다
+                transfer_id: 52001
+                status: PENDING_APPROVAL
+                processed_at: '2026-11-23T05:50:13Z'
+        '200':
+          description: 중복 요청. 기존 결과를 그대로 돌려줌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+              example:
+                result_code: E2001
+                message: 이미 접수된 요청입니다
+                transfer_id: 52001
+                status: PENDING_APPROVAL
+                processed_at: '2026-11-23T05:50:13Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/transfers/{transferId}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      summary: 이체 상태 조회
+      description: 승인 대기 중인 이체의 최종 결과를 확인할 때 쓴다.
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: 이체 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+              example:
+                result_code: '0000'
+                message: 이체가 완료되었습니다
+                transfer_id: 52001
+                status: POSTED
+                processed_at: '2026-11-23T06:10:44Z'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/transfers/{transferId}/approvals:
+    post:
+      tags: [approvals]
+      operationId: decideApproval
+      summary: 결재(승인 또는 거절)
+      description: |
+        이체를 만든 사람(maker)과 승인하는 사람(checker)은 달라야 한다(규칙 R4).
+        같은 사람이면 `E2006`으로 거부한다. 필요한 승인 수가 모두 채워지면 `APPROVED`가 되어 원장에 기록된다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+            example:
+              decision: APPROVED
+      responses:
+        '200':
+          description: 결재가 기록됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalResponse'
+              example:
+                transfer_id: 52001
+                status: APPROVED
+                approvals_done: 1
+                approvals_required: 1
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 어드민(결재자) 로그인 토큰. 이체 요청 API는 본문 서명으로 인증한다.
+
+  parameters:
+    TransferId:
+      name: transferId
+      in: path
+      required: true
+      description: 접수 시 받은 이체 ID
+      schema:
+        type: integer
+        format: int64
+        example: 52001
+
+  schemas:
+    CryptoMode:
+      type: string
+      enum: [LEGACY, HYBRID, PQC]
+      description: |
+        LEGACY는 RSA, HYBRID는 RSA와 ML-KEM/ML-DSA 병행, PQC는 ML-KEM/ML-DSA만 쓴다.
+        기업의 허용 최저 모드(`crypto_floor`) 미만이면 거부한다.
+
+    Signature:
+      type: object
+      required: [alg, value]
+      properties:
+        alg:
+          type: string
+          enum: [RSA, ML-DSA]
+        value:
+          type: string
+          description: base64 인코딩된 서명값
+          example: BASE64_SIGNATURE
+
+    Security:
+      type: object
+      description: 게이트웨이가 검사하는 보안 메타데이터
+      required: [crypto_mode, session_id, timestamp, nonce, signatures]
+      properties:
+        crypto_mode:
+          $ref: '#/components/schemas/CryptoMode'
+        session_id:
+          type: string
+          description: 키 교환으로 만든 세션 식별자
+          example: s-7f3a9c21
+        timestamp:
+          type: string
+          format: date-time
+          description: 서버 시각과 차이가 허용 범위(초안 5분)를 넘으면 거부
+        nonce:
+          type: string
+          minLength: 16
+          description: 요청마다 새로 만드는 일회용 값. 이미 쓴 값이면 거부
+          example: 9c1e5b7a2d4f6081
+        signatures:
+          type: array
+          minItems: 1
+          maxItems: 2
+          description: LEGACY는 RSA 1개, HYBRID는 RSA와 ML-DSA 둘 다, PQC는 ML-DSA 1개
+          items:
+            $ref: '#/components/schemas/Signature'
+
+    TransferRequest:
+      type: object
+      required:
+        - idempotency_key
+        - corporation_id
+        - from_account_no
+        - to_bank_code
+        - to_account_no
+        - amount
+        - currency
+        - requested_at
+      properties:
+        idempotency_key:
+          type: string
+          minLength: 8
+          maxLength: 64
+          description: 기업 안에서 유일한 요청 번호. 중복 이체 방지에 쓴다
+          example: ACME-20261123-000123
+        corporation_id:
+          type: integer
+          format: int64
+          description: 인증된 기업과 같아야 한다
+          example: 1001
+        from_account_no:
+          type: string
+          pattern: '^[0-9]{10,16}$'
+          description: 해당 기업 소유의 ACTIVE 계좌
+          example: '1002345678901'
+        to_bank_code:
+          type: string
+          pattern: '^[0-9]{3}$'
+          example: '088'
+        to_account_no:
+          type: string
+          pattern: '^[0-9]{10,16}$'
+          example: '1109876543210'
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 원 단위 정수. 소수점 없음
+          example: 1500000
+        currency:
+          type: string
+          enum: [KRW]
+        memo:
+          type: string
+          maxLength: 20
+        requested_at:
+          type: string
+          format: date-time
+
+    TransferEnvelope:
+      type: object
+      required: [security, transfer]
+      properties:
+        security:
+          $ref: '#/components/schemas/Security'
+        transfer:
+          $ref: '#/components/schemas/TransferRequest'
+
+    TransferStatus:
+      type: string
+      enum: [REQUESTED, PENDING_APPROVAL, APPROVED, POSTED, REJECTED, FAILED]
+      description: ERD의 이체 상태 흐름과 같다. 앞으로만 진행한다
+
+    TransferResponse:
+      type: object
+      required: [result_code, message, status, processed_at]
+      properties:
+        result_code:
+          type: string
+          description: 0000 또는 E2001
+        message:
+          type: string
+        transfer_id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/TransferStatus'
+        processed_at:
+          type: string
+          format: date-time
+
+    ApprovalRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVED, REJECTED]
+        reason:
+          type: string
+          maxLength: 200
+          description: 거절(REJECTED)일 때는 필수
+
+    ApprovalResponse:
+      type: object
+      required: [transfer_id, status, approvals_done, approvals_required]
+      properties:
+        transfer_id:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/TransferStatus'
+        approvals_done:
+          type: integer
+        approvals_required:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      required: [result_code, message]
+      properties:
+        result_code:
+          type: string
+          enum:
+            - E1000
+            - E1001
+            - E1002
+            - E1003
+            - E2002
+            - E2004
+            - E2005
+            - E2006
+            - E2007
+            - E2008
+            - E9000
+          description: |
+            E1000 형식 오류, E1001 서명 검증 실패, E1002 재전송 의심, E1003 허용되지 않은 암호 모드,
+            E2002 잔액 부족, E2004 한도 초과, E2005 계좌 상태 이상, E2006 작성자와 승인자가 같음,
+            E2007 이미 처리된 이체(상태 불일치), E2008 이체를 찾을 수 없음, E9000 서버 내부 오류
+        message:
+          type: string
+        transfer_id:
+          type: integer
+          format: int64
+          description: 접수된 뒤 실패한 경우에만 있다
+
+  responses:
+    BadRequest:
+      description: 형식 오류(필수 항목 누락, 제약 위반)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E1000
+            message: amount는 1 이상의 정수여야 합니다
+    Unauthorized:
+      description: 서명 검증 실패(E1001) 또는 재전송 의심(E1002)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E1001
+            message: 서명 검증에 실패했습니다
+    Forbidden:
+      description: 허용되지 않은 암호 모드(E1003) 또는 작성자와 승인자가 같음(E2006)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E1003
+            message: 허용되지 않은 암호 모드입니다
+    NotFound:
+      description: 이체를 찾을 수 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E2008
+            message: 이체를 찾을 수 없습니다
+    Conflict:
+      description: 이미 처리된 이체라 결재할 수 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E2007
+            message: 이미 처리된 이체입니다
+    Unprocessable:
+      description: 잔액 부족(E2002), 한도 초과(E2004), 계좌 상태 이상(E2005)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E2002
+            message: 잔액이 부족합니다
+    ServerError:
+      description: 서버 내부 오류. 같은 idempotency_key로 재시도할 수 있다
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            result_code: E9000
+            message: 서버 내부 오류입니다
