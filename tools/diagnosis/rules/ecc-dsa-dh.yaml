@@ -1,0 +1,25 @@
+rules:
+  # RSA 말고도 양자컴퓨터(쇼어 알고리즘)에 깨지는 공개키 암호
+  # - 타원곡선: EC, ECDSA, ECDH, Ed25519/Ed448/EdDSA, X25519/X448/XDH
+  # - DSA 서명, DH 키 교환
+  - id: classical-pubkey-jca
+    patterns:
+      - pattern-either:
+          - pattern: java.security.KeyPairGenerator.getInstance("$ALG", ...)
+          - pattern: java.security.KeyFactory.getInstance("$ALG", ...)
+          - pattern: java.security.Signature.getInstance("$ALG", ...)
+          - pattern: javax.crypto.KeyAgreement.getInstance("$ALG", ...)
+          - pattern: javax.crypto.Cipher.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          # ML-DSA, SLH-DSA 같은 양자내성암호는 제외 (앞에 ML-/SLH-가 붙음)
+          regex: (?i)^(EC|ECDSA|ECDH|ECDHC|ECMQV|ECIES|EdDSA|Ed25519|Ed448|XDH|X25519|X448|DSA|DH|DiffieHellman|.*with(ECDSA|DSA|PLAIN-ECDSA))$
+    message: >-
+      양자컴퓨터에 취약한 공개키 암호 발견 ($ALG).
+      서명(ECDSA, EdDSA, DSA)은 ML-DSA로, 키 교환(ECDH, X25519, DH)은 ML-KEM으로 전환할 것.
+      HYBRID 모드에서 일부러 함께 쓰는 고전 알고리즘이라면 해당 줄에 `// nosemgrep: classical-pubkey-jca`를 단다
+    languages: [java]
+    severity: ERROR
+    metadata:
+      category: quantum-vulnerable
+      replacement: [ML-DSA, ML-KEM]
