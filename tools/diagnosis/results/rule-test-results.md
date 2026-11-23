@@ -1,4 +1,6 @@
-# rsa.yaml 미탐 케이스 시험 결과
+# 진단 규칙 시험 결과
+
+> 처음에는 `rsa.yaml` 하나의 미탐 케이스를 시험했고, 이후 규칙을 넓히며 같은 문서에 결과를 이어 적었다.
 
 - 규칙: `tools/diagnosis/rules/rsa.yaml` (패턴: `KeyPairGenerator.getInstance("RSA")`)
 - 시험 코드: `tools/diagnosis/samples/Cases.java` (메서드 하나에 케이스 하나, 처음 시험은 case01~case23, 규격 반영 때 case24~28 추가)
@@ -70,7 +72,6 @@
 
 - 23개 중 **정답 22개**, 놓침 1개 (10번: 설정 값)
 - 오탐 없음: 2, 3, 22(ML-DSA-65), 23(SHA-256)은 여전히 안 잡음
-- 기존 `samples/Sample.java`도 그대로 탐지됨
 
 ## 남은 과제
 
