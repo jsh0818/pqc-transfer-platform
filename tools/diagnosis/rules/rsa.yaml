@@ -1,6 +1,38 @@
 rules:
-  - id: rsa-keygen
-    pattern: KeyPairGenerator.getInstance("RSA")
-    message: RSA 키 생성 발견 (양자 취약)
+  # JCA(java.security / javax.crypto)로 RSA를 쓰는 곳
+  # - 대소문자 무시, 제공자 이름("BC" 등) 붙은 경우 포함
+  # - 키 생성뿐 아니라 암호화(Cipher), 서명(Signature), 키 불러오기(KeyFactory)까지
+  - id: rsa-jca
+    patterns:
+      - pattern-either:
+          - pattern: java.security.KeyPairGenerator.getInstance("$ALG", ...)
+          - pattern: java.security.KeyFactory.getInstance("$ALG", ...)
+          - pattern: java.security.Signature.getInstance("$ALG", ...)
+          - pattern: javax.crypto.Cipher.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          # RSA, RSASSA-PSS, RSA/ECB/..., SHA256withRSA, SHA256withRSA/PSS 등
+          regex: (?i)^(RSA.*|.*WITHRSA.*)$
+    message: >-
+      RSA 사용 발견 ($ALG) - 양자컴퓨터에 취약.
+      서명이면 HYBRID(RSA+ML-DSA) 또는 PQC(ML-DSA)로, 암호화·키 전달이면 ML-KEM으로 전환할 것.
+      HYBRID 모드에서 일부러 쓰는 RSA라면 해당 줄에 `// nosemgrep: rsa-jca`를 단다
     languages: [java]
     severity: ERROR
+    metadata:
+      category: quantum-vulnerable
+      replacement: [ML-DSA, ML-KEM]
+
+  # Bouncy Castle 저수준 API로 RSA를 쓰는 곳
+  - id: rsa-bouncycastle
+    patterns:
+      - pattern: new $CLASS(...)
+      - metavariable-regex:
+          metavariable: $CLASS
+          regex: ^(org\.bouncycastle\..*\.)?RSA(KeyPairGenerator|Engine|BlindedEngine|KeyGenerationParameters)$
+    message: Bouncy Castle RSA 사용 발견 ($CLASS) - 양자컴퓨터에 취약. ML-DSA(서명) 또는 ML-KEM(키 전달)으로 전환할 것
+    languages: [java]
+    severity: ERROR
+    metadata:
+      category: quantum-vulnerable
+      replacement: [ML-DSA, ML-KEM]
