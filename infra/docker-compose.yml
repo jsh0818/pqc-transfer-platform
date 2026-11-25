@@ -1,0 +1,114 @@
+# 로컬 개발용 Docker Compose 뼈대 (v0.1, W1 초안)
+#
+# 이 파일은 "구역(네트워크) 구조"를 정하는 것이 목적이다. 설계 설명과 허용 통신 표는
+# docs/infra/network.md에 있다. 앱 서비스(게이트웨이, 이체 API 등)는 코드가 생기는
+# W2~W3에 아래 TODO 자리에 추가한다.
+#
+# 실행:
+#   cp infra/.env.example infra/.env        # 값은 로컬 전용 가짜 값이다
+#   docker compose -f infra/docker-compose.yml --env-file infra/.env up -d
+#   docker compose -f infra/docker-compose.yml --env-file infra/.env --profile chaos up -d   # 장애 주입 도구 포함
+
+name: pqc-transfer
+
+networks:
+  # 외부망: 기업 시스템(시뮬레이터)과 부하 발생기가 있는 곳. 호스트에서 게이트웨이로 들어오는 입구
+  external:
+    driver: bridge
+  # DMZ: 게이트웨이가 서명을 검증하고 복호화하는 곳. 바깥으로 나가는 길 없음
+  dmz:
+    driver: bridge
+    internal: true
+  # 내부망(계정계): 이체 API, 원장 DB, 배치. 바깥으로 나가는 길 없음, 호스트 포트 공개 불가
+  internal:
+    driver: bridge
+    internal: true
+  # 관리망: 어드민, 진단 도구, 모니터링. 호스트에서 대시보드를 볼 수 있어야 해서 공개 가능
+  mgmt:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  prometheus-data:
+  grafana-data:
+
+services:
+  # ---- 내부망: 원장 DB ----
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?infra/.env.example을 복사해 infra/.env를 만드세요}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]   # 내부망에만 연결. 게이트웨이(DMZ)는 DB에 닿을 수 없다
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- DMZ + 내부망: nonce 저장소, 세션 키 캐시 ----
+  # 게이트웨이가 nonce(재전송 방어)를 등록해야 해서 DMZ에도 연결한다. 거래 데이터는 두지 않는다.
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # AOF를 켜서 재시작해도 nonce(10분 보관)가 사라지지 않게 한다. 근거는 docs/infra/network.md
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    networks: [dmz, internal]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+
+  # ---- 관리망: 모니터링 ----
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"   # 내 컴퓨터에서만 접속
+    networks: [mgmt]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [mgmt]
+    depends_on: [prometheus]
+
+  # ---- 장애 주입(선택): 평소에는 켜지 않는다. --profile chaos로만 시작 ----
+  # DB 지연, 네트워크 단절 시험(docs/benchmark-plan.md 3-4절)에 쓴다. 프록시 설정은 W10에 추가.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    profiles: [chaos]
+    networks: [mgmt, dmz, internal]
+    ports:
+      - "127.0.0.1:8474:8474"   # 제어 API
+
+  # ================= TODO: 앱 서비스 (코드가 생기는 주차에 추가) =================
+  # 각 서비스가 어느 네트워크에 붙는지가 보안 구조의 핵심이다. 바꾸려면 docs/infra/network.md도 같이 고친다.
+  #
+  # gateway        (W3)  networks: [external, dmz]    ports: ["127.0.0.1:8080:8080"]   # 유일한 외부 입구
+  # transfer-api   (W3)  networks: [dmz, internal]    # 포트 8081, DMZ에서 들어오는 유일한 문
+  # batch          (W5)  networks: [internal]         # 대량 이체
+  # admin          (W7)  networks: [mgmt, internal]   # 결재 화면의 서버. DB는 직접 못 보고 이체 API만 호출
+  # diagnosis      (W2)  networks: [mgmt]             # 진단 도구(FastAPI)
+  # erp-sim        (W3)  networks: [external]         # 기업 시스템 시뮬레이터
+  # k6             (W9)  networks: [external]         # 부하 발생기
