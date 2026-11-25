@@ -45,6 +45,7 @@ loadtest/results/
 # ---- IDE / OS ----
 .idea/
 .vscode/
+*.code-workspace
 *.iml
 .DS_Store
 Thumbs.db

@@ -5,8 +5,12 @@ import javax.crypto.KeyGenerator;
 import org.bouncycastle.crypto.generators.RSAKeyPairGenerator;
 
 /**
- * rsa.yaml 규칙 시험용 코드. 메서드 하나에 케이스 하나.
+ * 진단 규칙(tools/diagnosis/rules/) 시험용 코드. 메서드 하나에 케이스 하나.
  * 메서드 이름의 case01~case28 번호가 결과 표의 번호와 같다.
+ *
+ * 자동 시험: tools/diagnosis/run-tests.sh
+ * - ruleid 주석(뒤에 규칙 ID를 적음) 바로 아랫줄은 그 규칙에 걸려야 한다.
+ * - 이 주석이 없는 줄은 어떤 규칙에도 걸리면 안 된다(안전한 케이스).
  */
 public class Cases {
 
@@ -16,6 +20,7 @@ public class Cases {
 
     // 01: RSA 사용 -> 탐지돼야 함
     void case01() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance("RSA");
     }
 
@@ -32,16 +37,19 @@ public class Cases {
     // 04: 변수에 담은 RSA -> 탐지돼야 함
     void case04() throws Exception {
         String a = "RSA";
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance(a);
     }
 
     // 05: 상수에 담은 RSA -> 탐지돼야 함
     void case05() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance(ALG);
     }
 
     // 06: 글자 이어붙이기 -> 탐지돼야 함
     void case06() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance("R" + "SA");
     }
 
@@ -49,77 +57,92 @@ public class Cases {
 
     // 07: 제공자 이름 추가
     void case07() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance("RSA", "BC");
     }
 
     // 08: 소문자
     void case08() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance("rsa");
     }
 
     // 09: 패키지 이름까지 전부 적음
     void case09() throws Exception {
+        // ruleid: rsa-jca
         java.security.KeyPairGenerator.getInstance("RSA");
     }
 
     // 10: 설정 파일 값 (설정 파일에 RSA가 적혀 있다고 가정)
     void case10() throws Exception {
         String alg = System.getProperty("crypto.alg");
+        // ruleid: dynamic-crypto-alg
         KeyPairGenerator.getInstance(alg);
     }
 
     // 11: Cipher로 RSA 암호화
     void case11() throws Exception {
+        // ruleid: rsa-jca
         Cipher.getInstance("RSA/ECB/PKCS1Padding");
     }
 
     // 12: Signature로 RSA 서명
     void case12() throws Exception {
+        // ruleid: rsa-jca
         Signature.getInstance("SHA256withRSA");
     }
 
     // 13: KeyFactory로 RSA 키 불러오기
     void case13() throws Exception {
+        // ruleid: rsa-jca
         KeyFactory.getInstance("RSA");
     }
 
     // 14: RSA 서명의 다른 이름
     void case14() throws Exception {
+        // ruleid: rsa-jca
         KeyPairGenerator.getInstance("RSASSA-PSS");
     }
 
     // 15: Bouncy Castle RSA
     void case15() {
+        // ruleid: rsa-bouncycastle
         new RSAKeyPairGenerator();
     }
 
     // 16: 타원곡선 (양자 취약)
     void case16() throws Exception {
+        // ruleid: classical-pubkey-jca
         KeyPairGenerator.getInstance("EC");
     }
 
     // 17: ECDSA 서명 (양자 취약)
     void case17() throws Exception {
+        // ruleid: classical-pubkey-jca
         Signature.getInstance("SHA256withECDSA");
     }
 
     // 18: DSA (양자 취약)
     void case18() throws Exception {
+        // ruleid: classical-pubkey-jca
         KeyPairGenerator.getInstance("DSA");
     }
 
     // 19: DH 키 교환 (양자 취약)
     void case19() throws Exception {
+        // ruleid: classical-pubkey-jca
         KeyAgreement.getInstance("DH");
     }
 
     // 20: ECDH 키 교환 (양자 취약)
     void case20() throws Exception {
+        // ruleid: classical-pubkey-jca
         KeyAgreement.getInstance("ECDH");
     }
 
     // 21: Ed25519 서명 (양자 취약)
     void case21() throws Exception {
+        // ruleid: classical-pubkey-jca
         KeyPairGenerator.getInstance("Ed25519");
     }
 
@@ -154,6 +177,7 @@ public class Cases {
 
     // 27: 요청의 alg 값으로 알고리즘 선택 -> 확인 필요(WARNING)
     void case27(String algFromRequest) throws Exception {
+        // ruleid: dynamic-crypto-alg
         Signature.getInstance(algFromRequest);
     }
 
