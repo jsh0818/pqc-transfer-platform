@@ -6,7 +6,7 @@
 - 시험 코드: `tools/diagnosis/samples/Cases.java` (메서드 하나에 케이스 하나, 처음 시험은 case01~case23, 규격 반영 때 case24~28 추가)
 - 도구: Semgrep 1.186.0
 - 실행: `semgrep --config tools/diagnosis/rules/rsa.yaml tools/diagnosis/samples/Cases.java`
-- 탐지된 줄: 19, 35, 40, 45 (각각 case01, case04, case05, case06)
+- 탐지된 줄: 19, 35, 40, 45 (각각 case01, case04, case05, case06. 당시 파일 기준이며, 자동 시험용 주석을 넣은 뒤로 줄 번호가 바뀌었다)
 
 | 번호 | 시험 코드 | 실제로는 | 규칙 결과 |
 |---|---|---|---|
@@ -106,3 +106,24 @@
 
 - 28개 모두 기대대로 나옴. 위험 18개는 ERROR, 판단 불가 2개(10, 27)는 WARNING, 안전 8개는 안 잡음
 - 10번은 "놓침"에서 "확인 필요"로 바뀜. 값이 무엇인지는 여전히 사람이나 AI가 확인해야 함
+
+---
+
+# 자동 시험 도입 (2026-11-25)
+
+지금까지는 결과를 사람이 세어 표에 적었고, 그 과정에서 집계 실수가 있었다(첫 시험 정답 9개 → 실제 8개).
+그래서 기대 결과를 시험 코드에 직접 적고, Semgrep이 실제 결과와 자동으로 비교하게 바꿨다.
+
+- 실행: `tools/diagnosis/run-tests.sh` (모두 통과하면 종료 코드 0, 실패하면 0이 아닌 값)
+- 기대 결과 적는 법: `Cases.java`에서 걸려야 하는 줄 바로 위에 `ruleid` 주석과 규칙 ID를 적는다. 주석이 없는 줄은 어떤 규칙에도 걸리면 안 된다
+- 규칙 파일 3개를 한 번에 적용해야 "안전한 코드는 어떤 규칙에도 안 걸린다"까지 확인된다. `semgrep --test`는 규칙 파일 하나와 시험 파일 하나만 짝지으므로, 스크립트가 실행할 때만 규칙을 임시로 합친다
+
+## 결과
+
+- 규칙 4개(`rsa-jca`, `rsa-bouncycastle`, `classical-pubkey-jca`, `dynamic-crypto-alg`) 모두 통과
+- 기대 결과: `rsa-jca` 11개, `rsa-bouncycastle` 1개, `classical-pubkey-jca` 6개(ERROR 합계 18), `dynamic-crypto-alg` 2개(WARNING), 나머지 8개는 안 잡음. 위 "이체 전문 규격 v0.2 반영" 결과와 같다
+- 시험이 실제로 틀린 결과를 잡는지 확인: 규칙에서 EC를 빼면 16번 누락으로 실패, 주석 없는 줄에 RSA를 넣으면 오탐으로 실패
+
+## 앞으로
+
+- 케이스를 추가할 때는 표를 세지 않고 `ruleid` 주석만 달고 스크립트를 돌린다
