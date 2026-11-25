@@ -96,7 +96,36 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env ps
 - 장애 주입 도구는 평소엔 켜지 않는다. `--profile chaos`를 붙일 때만 시작한다.
 - `infra/.env`는 Git에 올라가지 않는다(`.gitignore`). `.env.example`의 값은 로컬 전용 가짜 값이다.
 
-**검증 상태**: 설정 문법(`docker compose config`)과 구조(네트워크 연결, 호스트 포트 공개 범위)는 자동으로 확인했다. **컨테이너를 실제로 기동하는 것은 아직 확인하지 못했다.** Docker가 설치된 컴퓨터에서 위 명령을 한 번 실행해 보고 결과를 알려야 한다.
+끝내려면 다음을 쓴다. 데이터(볼륨)는 남는다. 데이터까지 지우려면 `down` 뒤에 `-v`를 붙인다.
+
+```
+docker compose -f infra/docker-compose.yml --env-file infra/.env down
+```
+
+### 6-1. 구역 분리가 실제로 되는지 확인하기
+
+구역(네트워크)별로 임시 컨테이너를 만들어 접속해 본다. 임시 컨테이너는 끝나면 자동으로 사라진다. 네트워크 이름은 `pqc-transfer_<구역>` 형식이다. 막혀야 하는 시험은 일부러 실패하는 것이 정상이며, Docker가 오류 안내 문구를 덧붙일 수 있다.
+
+| 번호 | 시험 | 명령(끝부분) | 기대 결과 | 관련 통신 |
+| --- | --- | --- | --- | --- |
+| 1 | 내부망 → PostgreSQL | `--network pqc-transfer_internal postgres:16 pg_isready -h postgres -p 5432` | `accepting connections` | F4, F6 |
+| 2 | DMZ → PostgreSQL | `--network pqc-transfer_dmz postgres:16 pg_isready -h postgres -p 5432 -t 3` | `no response` (막힘) | 4장: 게이트웨이 → DB 금지 |
+| 3 | DMZ → Redis | `--network pqc-transfer_dmz redis:7 redis-cli -h redis -a <비밀번호> --no-auth-warning ping` | `PONG` | F3 |
+| 4 | 관리망 → Redis | `--network pqc-transfer_mgmt redis:7 redis-cli -h redis -a <비밀번호> --no-auth-warning ping` | `No address associated with hostname` (막힘) | 4장: 관리망 → 내부 서비스 금지 |
+| 5 | 내부망 → 인터넷 | `--network pqc-transfer_internal busybox wget -T 3 -qO- http://example.com` | `bad address` (막힘) | 4장: 내부망 → 인터넷 금지 |
+
+각 명령은 `docker run --rm`으로 시작한다. 예: `docker run --rm --network pqc-transfer_dmz postgres:16 pg_isready -h postgres -p 5432 -t 3`
+
+### 6-2. 검증 상태
+
+| 확인 | 결과 | 확인한 날 |
+| --- | --- | --- |
+| 설정 문법(`docker compose config`)과 구조(네트워크 연결, 호스트 포트 공개 범위) | 통과 | 2026-11-25 |
+| 서비스 실제 기동(`up -d`) | `postgres`, `redis`, `prometheus`, `grafana` 모두 `Up`, `postgres`와 `redis`는 `healthy` | 2026-11-25 (Windows, Docker Desktop, WSL 2) |
+| 호스트 포트 공개 범위 | `grafana`, `prometheus`만 `127.0.0.1`에 공개. `postgres`, `redis`는 공개 안 됨 | 2026-11-25 |
+| 구역 분리 시험 1~5 | 5개 모두 기대 결과 | 2026-11-25 |
+
+이미지 버전 네 개(`postgres:16`, `redis:7`, `prom/prometheus:v2.55.1`, `grafana/grafana:11.3.0`)는 실제로 내려받아졌다. `toxiproxy`(장애 주입)는 `--profile chaos` 기동을 아직 확인하지 않았다. 앱 서비스(게이트웨이, 이체 API)가 없으므로 F1, F2, F5, F7 통신은 W3 이후 확인한다.
 
 ## 7. 아직 정하지 않은 것 (팀이 정할 것)
 
