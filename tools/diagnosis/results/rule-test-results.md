@@ -6,7 +6,7 @@
 - 시험 코드: `tools/diagnosis/samples/Cases.java` (메서드 하나에 케이스 하나, 처음 시험은 case01~case23, 규격 반영 때 case24~28 추가)
 - 도구: Semgrep 1.186.0
 - 실행: `semgrep --config tools/diagnosis/rules/rsa.yaml tools/diagnosis/samples/Cases.java`
-- 탐지된 줄: 18, 34, 39, 44 (각각 case01, case04, case05, case06)
+- 탐지된 줄: 19, 35, 40, 45 (각각 case01, case04, case05, case06)
 
 | 번호 | 시험 코드 | 실제로는 | 규칙 결과 |
 |---|---|---|---|
@@ -36,7 +36,7 @@
 
 ## 정리
 
-- 23개 중 정답 9개(탐지 4 + 안 잡음 5), 놓침 14개.
+- 23개 중 정답 8개(탐지 4 + 안 잡음 4), 놓침 15개.
 - 놓친 이유는 세 갈래:
   1. 같은 RSA인데 적는 모양이 다름 (7, 8, 9, 14, 15)
   2. RSA를 쓰는 다른 기능을 규칙에 안 넣음 (11, 12, 13)
