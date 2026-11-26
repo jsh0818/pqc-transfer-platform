@@ -1,3 +1,20 @@
 spring:
   application:
     name: transfer-api
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:pqc}
+    username: ${POSTGRES_USER:pqc_app}
+    password: ${POSTGRES_PASSWORD}   # 기본값을 두지 않는다. 환경변수가 없으면 시작하지 않는다 (위협 모델 T9)
+  jpa:
+    hibernate:
+      ddl-auto: validate             # 테이블은 Flyway만 만든다. 엔티티와 안 맞으면 시작하지 않는다
+    open-in-view: false
+
+server:
+  port: 8081                         # docs/infra/network.md: 이체 API는 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
