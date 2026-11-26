@@ -123,14 +123,41 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /v1/transfers/{transferId}:
-    get:
+  /v1/transfers/{transferId}/status:
+    post:
       tags: [transfers]
-      operationId: getTransfer
+      operationId: inquireTransfer
       summary: 이체 상태 조회
-      description: 승인 대기 중인 이체의 최종 결과를 확인할 때 쓴다.
+      description: |
+        승인 대기 중이던 이체의 최종 결과를 기업 시스템이 확인할 때 쓴다.
+        조회이지만 `POST`를 쓴다. HYBRID 서명(약 4.8KB)이 헤더 한도(보통 8KB)에 가까워서,
+        이체 요청과 같은 `security` 객체를 본문에 실어 같은 검증 경로(게이트웨이)를 그대로 쓰기 위해서다.
+        서명한 기업의 이체만 조회할 수 있고, 다른 기업의 이체나 없는 이체는 모두 `404`(`E2008`)로 답한다.
+      security: []   # 토큰 인증 없음. 본문의 `security` 객체(서명)로 인증한다.
       parameters:
         - $ref: '#/components/parameters/TransferId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InquiryEnvelope'
+            example:
+              security:
+                crypto_mode: HYBRID
+                session_id: s-7f3a9c21
+                timestamp: '2026-11-23T06:10:40Z'
+                nonce: 4b8d0e2f6a1c7359
+                signatures:
+                  - alg: RSA
+                    kid: acme-rsa-2026-01
+                    value: BASE64_RSA_SIGNATURE
+                  - alg: ML-DSA
+                    kid: acme-mldsa-2026-01
+                    value: BASE64_ML_DSA_SIGNATURE
+              inquiry:
+                transfer_id: 52001
+                corporation_id: 1001
       responses:
         '200':
           description: 이체 상태
@@ -144,6 +171,12 @@ paths:
                 transfer_id: 52001
                 status: POSTED
                 processed_at: '2026-11-23T06:10:44Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -321,6 +354,30 @@ components:
           $ref: '#/components/schemas/Security'
         transfer:
           $ref: '#/components/schemas/TransferRequest'
+
+    InquiryRequest:
+      type: object
+      required: [transfer_id, corporation_id]
+      properties:
+        transfer_id:
+          type: integer
+          format: int64
+          description: 경로의 `transferId`와 같아야 한다(다르면 `E1000`). 서명 범위에 들어가므로 경로를 바꿔 치기할 수 없다
+          example: 52001
+        corporation_id:
+          type: integer
+          format: int64
+          description: 서명한 기업과 같아야 한다
+          example: 1001
+
+    InquiryEnvelope:
+      type: object
+      required: [security, inquiry]
+      properties:
+        security:
+          $ref: '#/components/schemas/Security'
+        inquiry:
+          $ref: '#/components/schemas/InquiryRequest'
 
     TransferStatus:
       type: string
