@@ -1,0 +1,10 @@
+# Prometheus 설정 뼈대 (W1). 지금은 자기 자신만 수집한다.
+# 게이트웨이·이체 API 같은 앱의 수집 대상은 앱이 생기는 주차에 추가한다.
+# 영역을 건너 수집하는 방법은 docs/infra/network.md의 열린 질문 4번.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
