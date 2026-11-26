@@ -122,34 +122,141 @@ def rules_sha256(rules_dir: Path = RULES_DIR) -> str:
 
 
 def _metavar(result: dict, name: str) -> str | None:
-    value = result.get("extra", {}).get("metavars", {}).get(name)
+    metavars = result.get("extra", {}).get("metavars") or {}
+    value = metavars.get(name)
     return value.get("abstract_content") if value else None
 
 
-def to_finding(result: dict, base: Path | None = None) -> Finding:
-    """Semgrep 결과 1건을 Finding으로 바꾼다."""
+# Semgrep의 nosemgrep 표시: `nosemgrep`(모든 규칙) 또는 `nosemgrep: 규칙1, 규칙2`(적힌 규칙만)
+_NOSEM_PATTERN = re.compile(r"\bnosem(?:grep)?\b(?:\s*:\s*(?P<ids>[\w.\-]+(?:\s*,\s*[\w.\-]+)*))?")
+
+# Semgrep에 로그인하지 않으면 extra.lines에 코드 대신 이 문구가 온다(1.186.0에서 확인)
+_LOGIN_PLACEHOLDER = "requires login"
+
+_NEW_CLASS_PATTERN = re.compile(r"^\s*new\s+([\w.]+)\s*\(")
+_STRING_CONCAT_PATTERN = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"(?:\s*\+\s*"((?:[^"\\]|\\.)*)")*\s*$')
+_STRING_PIECE_PATTERN = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# 규칙 메시지는 "... ($ALG) ..." 형태로 Semgrep이 상수 값을 채워 넣는다(로그인 여부와 관계없이)
+_MESSAGE_VALUE_PATTERN = re.compile(r"\(([^()]+)\)")
+
+
+def _read_source(path: Path, cache: dict[Path, bytes | None]) -> bytes | None:
+    """원본 파일을 읽는다. 읽을 수 없으면 None."""
+    if path not in cache:
+        try:
+            cache[path] = path.read_bytes()
+        except OSError:
+            cache[path] = None
+    return cache[path]
+
+
+def _is_nosem(lines: list[str], start_line: int, check_id: str) -> bool:
+    """Semgrep과 같은 기준: 결과의 첫 줄이나 바로 윗줄에 nosemgrep이 있으면 제외한다."""
+    rule_id = check_id.split(".")[-1]
+    for line_no in (start_line, start_line - 1):
+        if not 1 <= line_no <= len(lines):
+            continue
+        m = _NOSEM_PATTERN.search(lines[line_no - 1])
+        if m is None:
+            continue
+        ids = m.group("ids")
+        if ids is None:
+            return True
+        if any(i.strip() in (rule_id, check_id) for i in ids.split(",")):
+            return True
+    return False
+
+
+def _first_argument(call: str) -> str | None:
+    """`X.getInstance(a, b)`에서 첫 인자 `a`의 코드를 돌려준다. 문자열 안의 쉼표·괄호는 무시한다."""
+    open_at = call.find("(")
+    if open_at < 0:
+        return None
+    depth, i, start = 0, open_at + 1, open_at + 1
+    while i < len(call):
+        ch = call[i]
+        if ch == '"':
+            i += 1
+            while i < len(call) and call[i] != '"':
+                i += 2 if call[i] == "\\" else 1
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                return call[start:i].strip() or None
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return call[start:i].strip() or None
+        i += 1
+    return None
+
+
+def _string_literal_value(expr: str | None) -> str | None:
+    """`"RSA"` 또는 `"R" + "SA"`처럼 문자열 상수만으로 된 식이면 그 값을 돌려준다."""
+    if expr is None or not _STRING_CONCAT_PATTERN.match(expr):
+        return None
+    return "".join(_STRING_PIECE_PATTERN.findall(expr))
+
+
+def to_finding(result: dict, base: Path | None = None, source_cache: dict | None = None) -> Finding:
+    """Semgrep 결과 1건을 Finding으로 바꾼다.
+
+    Semgrep에 로그인하지 않으면(CI 등) 출력의 extra.lines는 "requires login", extra.metavars는 null,
+    extra.is_ignored는 항상 false다(1.186.0에서 확인). 그래서 로그인 여부와 관계없이 같은 결과가 나오도록
+    코드·알고리즘·nosemgrep 여부를 원본 파일(결과의 위치 offset)과 메시지에서 직접 얻는다.
+    원본 파일을 읽을 수 없을 때만 Semgrep 출력(metavars, lines, is_ignored)을 쓴다.
+    """
     extra = result.get("extra", {})
     rule_id = result["check_id"].split(".")[-1]
     severity = extra.get("severity", "")
     label = LABEL_BY_SEVERITY.get(severity)
     if label is None:
         raise ScannerError(f"알 수 없는 severity: {severity} ({rule_id})")
-    code = extra.get("lines", "").strip()
+    message = " ".join(extra.get("message", "").split())
+
+    start, end = result["start"], result["end"]
+    start_line, end_line = start["line"], end["line"]
+    raw = _read_source(Path(result["path"]), source_cache if source_cache is not None else {})
+    lines = raw.decode("utf-8", errors="replace").splitlines() if raw is not None else None
+    have_source = (
+        lines is not None and 1 <= start_line <= end_line <= len(lines)
+        and "offset" in start and "offset" in end and 0 <= start["offset"] <= end["offset"] <= len(raw)
+    )
+
+    if have_source:
+        code = "\n".join(lines[start_line - 1:end_line]).strip()
+        matched = raw[start["offset"]:end["offset"]].decode("utf-8", errors="replace")
+        suppressed = _is_nosem(lines, start_line, result["check_id"])
+        message_value_match = _MESSAGE_VALUE_PATTERN.search(message)
+        message_value = message_value_match.group(1).strip() if message_value_match else None
+        new_class = _NEW_CLASS_PATTERN.match(matched)
+        argument = None if new_class else _first_argument(matched)
+        bc_class = new_class.group(1) if new_class else None
+        review_expression = argument
+        # 문자열 상수면 코드에서 바로, 변수·상수 이름이면 Semgrep이 메시지에 채운 값을 쓴다
+        algorithm_value = _string_literal_value(argument) or message_value
+    else:
+        lines_text = extra.get("lines", "").strip()
+        code = "" if lines_text == _LOGIN_PLACEHOLDER else lines_text
+        matched = code
+        suppressed = bool(extra.get("is_ignored", False))
+        bc_class = _metavar(result, "$CLASS")
+        review_expression = _metavar(result, "$ALG")
+        # metavariable-regex가 잡은 전체 문자열($1)이 상수 접기까지 반영된 알고리즘 이름이다
+        algorithm_value = _metavar(result, "$1") or _metavar(result, "$ALG")
 
     algorithm = None
     expression = None
-    api_match = _API_PATTERN.search(code)
+    api_match = _API_PATTERN.search(matched) or _API_PATTERN.search(code)
     api = api_match.group(1) if api_match else None
-    bc_class = _metavar(result, "$CLASS")
     if bc_class is not None:
         # Bouncy Castle 저수준 클래스: 클래스 이름 앞부분이 알고리즘
         api = bc_class.split(".")[-1]
         algorithm = "RSA" if api.upper().startswith("RSA") else None
     elif label == "REVIEW":
-        expression = _metavar(result, "$ALG")
+        expression = review_expression
     else:
-        # metavariable-regex가 잡은 전체 문자열($1)이 상수 접기까지 반영된 알고리즘 이름이다
-        algorithm = _metavar(result, "$1") or _metavar(result, "$ALG")
+        algorithm = algorithm_value
 
     path = Path(result["path"])
     if base is not None:
@@ -160,8 +267,8 @@ def to_finding(result: dict, base: Path | None = None) -> Finding:
 
     return Finding(
         file=path.as_posix(),
-        line=result["start"]["line"],
-        end_line=result["end"]["line"],
+        line=start_line,
+        end_line=end_line,
         rule_id=rule_id,
         label=label,
         algorithm=algorithm,
@@ -171,14 +278,15 @@ def to_finding(result: dict, base: Path | None = None) -> Finding:
         # REVIEW는 알고리즘을 아직 모르므로 대체 알고리즘을 제안하지 않는다
         replacement=[] if label == "REVIEW" else _REPLACEMENT_BY_API.get(
             api or "", list(extra.get("metadata", {}).get("replacement", []))),
-        suppressed=bool(extra.get("is_ignored", False)),
+        suppressed=suppressed,
         code=code,
-        message=" ".join(extra.get("message", "").split()),
+        message=message,
     )
 
 
 def parse(semgrep_json: dict, target: str, base: Path | None = None, rules_hash: str = "") -> Report:
-    findings = [to_finding(r, base) for r in semgrep_json.get("results", [])]
+    cache: dict[Path, bytes | None] = {}  # 같은 파일을 여러 번 읽지 않도록
+    findings = [to_finding(r, base, cache) for r in semgrep_json.get("results", [])]
     findings.sort(key=lambda f: (f.file, f.line, f.rule_id))
     errors = []
     for e in semgrep_json.get("errors", []):
@@ -210,8 +318,8 @@ def run_semgrep(target: Path, rules_dir: Path = RULES_DIR, semgrep: str | None =
         str(target),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    # semgrep: 0 = 정상, 1 = 결과 있음(--error 없이도 일부 버전에서), 그 외 = 실행 오류
-    if proc.returncode not in (0, 1):
+    # --error를 쓰지 않으므로 결과가 있어도 0으로 끝난다(1.186.0에서 확인). 0이 아니면 실행 오류다(예: 7 = 규칙 없음)
+    if proc.returncode != 0:
         raise ScannerError(f"semgrep 실행 실패(exit {proc.returncode}): {proc.stderr.strip()[:500]}")
     try:
         return json.loads(proc.stdout)

@@ -5,7 +5,7 @@ Java 코드에서 양자컴퓨터에 취약한 공개키 암호(RSA, 타원곡�
 
 ## 실행
 
-Python 3.10 이상과 Semgrep 1.186.0이 필요하다(`pip install semgrep==1.186.0`). 그 밖의 패키지는 쓰지 않는다.
+Python 3.10 이상(Semgrep 1.186.0의 요구 사항)과 Semgrep 1.186.0이 필요하다(`pip install semgrep==1.186.0`). 그 밖의 패키지는 쓰지 않는다.
 
 ```bash
 python3 tools/diagnosis/scan.py <폴더 또는 파일>                      # 화면에 요약과 목록
@@ -20,7 +20,7 @@ python3 tools/diagnosis/scan.py <폴더> --fail-on vulnerable           # 취약
 | `--fail-on none\|vulnerable\|review` | 이 수준 이상의 결과가 있으면 종료 코드 1. `review`는 VULNERABLE과 REVIEW 모두. `nosemgrep`으로 표시한 의도된 사용은 세지 않는다(기본 `none`) |
 | `--semgrep <경로>` | semgrep 실행 파일 위치 |
 
-종료 코드: `0` 기준 이상 결과 없음, `1` 기준 이상 결과 있음, `2` 실행 오류(semgrep 없음, 대상 없음, 구문 오류 등).
+종료 코드: `0` 기준 이상 결과 없음, `1` 기준 이상 결과 있음, `2` 실행 오류(semgrep 없음, 대상 없음, Semgrep이 실패하거나 오류를 보고함). 구문이 깨진 파일은 Semgrep이 오류로 보고하지 않을 수 있다(아래 한계).
 
 ## 출력 예 (`tools/diagnosis/samples`)
 
@@ -63,7 +63,17 @@ VULNERABLE 18 · REVIEW 2 · 의도됨(nosemgrep) 1 · 오류 0
 tools/diagnosis/run-tests.sh
 ```
 
-규칙 시험(`semgrep --test`)에 이어 스캐너 시험(`scanner/tests`, unittest 28개)을 돌린다. 통합 시험은 `Cases.java`의 `ruleid`·`nosemgrep` 주석을 정답으로 읽어 스캐너 결과와 비교한다. semgrep이 없으면 통합 시험만 건너뛴다.
+규칙 시험(`semgrep --test`)에 이어 스캐너 시험(`scanner/tests`, unittest 43개)을 돌린다. 통합 시험은 `Cases.java`의 `ruleid`·`nosemgrep` 주석을 정답으로 읽어 스캐너 결과와 비교한다. semgrep이 없으면 통합 시험만 건너뛴다.
+
+## Semgrep 로그인과 무관하게 같은 결과
+
+Semgrep 1.186.0은 로그인하지 않으면(CI 등) JSON 결과의 `extra.lines`에 코드 대신 `requires login`을, `extra.metavars`에 `null`을 주고, `extra.is_ignored`(nosemgrep 표시)를 항상 `false`로 준다. 그래서 스캐너는 이 값들을 쓰지 않고 다음에서 직접 얻는다.
+
+- 코드, API, Bouncy Castle 클래스, REVIEW의 식: 결과의 위치(`start.offset`~`end.offset`, 줄 번호)로 원본 파일에서 읽는다
+- 알고리즘 이름: 문자열 상수(`"RSA"`, `"R" + "SA"`)는 코드에서 계산하고, 변수·상수 이름으로 넘긴 경우는 Semgrep이 규칙 메시지의 `($ALG)` 자리에 채운 값을 쓴다. 그래서 규칙 메시지의 첫 괄호에는 `$ALG`(또는 `$CLASS`)를 둔다
+- nosemgrep: Semgrep과 같은 기준(결과 첫 줄이나 바로 윗줄, 규칙 ID를 적었으면 그 규칙만)으로 원본에서 판단한다
+
+통합 시험은 로그인 정보가 없는 설정 파일(`SEMGREP_SETTINGS_FILE`)로 돌려 CI와 같은 조건에서 확인한다.
 
 ## 범위와 한계
 
