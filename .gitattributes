@@ -1,0 +1,4 @@
+# Gradle wrapper 줄바꿈 고정: gradlew는 LF(맥·리눅스), gradlew.bat은 CRLF(Windows)
+/gradlew        text eol=lf
+*.bat           text eol=crlf
+*.jar           binary
