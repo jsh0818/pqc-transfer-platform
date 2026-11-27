@@ -70,3 +70,13 @@ jobs:
 
       - name: 진단 규칙 시험
         run: bash tools/diagnosis/run-tests.sh
+
+      # 우리 운영 코드에 양자컴퓨터에 취약한 공개키 암호가 들어오면 실패한다.
+      # HYBRID의 RSA처럼 의도한 사용은 코드에 nosemgrep으로 표시해 두어 세지 않는다.
+      - name: 우리 코드 진단 (libs, services)
+        run: |
+          status=0
+          for target in libs services; do
+            python tools/diagnosis/scan.py "$target" --fail-on vulnerable || status=1
+          done
+          exit "$status"
