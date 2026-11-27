@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}     # 기본값을 두지 않는다. 환경변수가 없으면 시작하지 않는다 (T9)
+      # Redis가 멈추면 기본 60초를 기다려 요청 스레드가 묶인다. 짧게 끊고 E9000으로 답한다 (T12)
+      connect-timeout: 2s
+      timeout: 2s
+
+server:
+  port: 8080                          # docs/infra/network.md F1: 게이트웨이는 8080
+
+gateway:
+  transfer-api-url: ${TRANSFER_API_URL:http://localhost:8081}   # F2
+  clock-skew: 5m                      # 전문 규격: timestamp 앞뒤 5분
+  nonce-ttl: 10m                      # 전문 규격: nonce Redis 10분 보관
+  # 기업 정보는 환경변수로 넣는다. 예) 기업 1001, 최저 모드 HYBRID, 서명 키 2개
+  #   GATEWAY_CORPORATIONS_1001_FLOOR=HYBRID
+  #   GATEWAY_CORPORATIONS_1001_KIDS=acme-rsa-2026-01,acme-mldsa-2026-01
+  # 공개키는 CRYPTO_KEY_<KID>_ALG, CRYPTO_KEY_<KID>_PUBLIC (libs/crypto EnvKeyProvider)
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
