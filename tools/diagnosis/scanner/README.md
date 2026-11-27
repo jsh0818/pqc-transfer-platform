@@ -17,10 +17,10 @@ python3 tools/diagnosis/scan.py <폴더> --fail-on vulnerable           # 취약
 | --- | --- |
 | `--format text\|json` | 출력 형식(기본 `text`) |
 | `-o, --output <파일>` | 결과를 파일로 저장 |
-| `--fail-on none\|vulnerable\|review` | 이 수준 이상의 결과가 있으면 종료 코드 1. `review`는 VULNERABLE과 REVIEW 모두. `nosemgrep`으로 표시한 의도된 사용은 세지 않는다(기본 `none`) |
+| `--fail-on none\|vulnerable\|review` | 이 수준 이상의 결과가 있으면 종료 코드 1. `review`는 VULNERABLE과 REVIEW 모두. `nosemgrep`으로 표시한 의도된 사용은 세지 않는다. 검사한 파일이 0개면 종료 코드 2. 기본 `none` |
 | `--semgrep <경로>` | semgrep 실행 파일 위치 |
 
-종료 코드: `0` 기준 이상 결과 없음, `1` 기준 이상 결과 있음, `2` 실행 오류(semgrep 없음, 대상 없음, Semgrep이 실패하거나 오류를 보고함). 구문이 깨진 파일은 Semgrep이 오류로 보고하지 않을 수 있다(아래 한계).
+종료 코드: `0` 기준 이상 결과 없음, `1` 기준 이상 결과 있음, `2` 실행 오류(semgrep 없음, 대상 없음, Semgrep이 실패하거나 오류를 보고함, `--fail-on`을 줬는데 검사한 파일이 0개). 구문이 깨진 파일은 Semgrep이 오류로 보고하지 않을 수 있다(아래 한계).
 
 ## 출력 예 (`tools/diagnosis/samples`)
 
@@ -63,7 +63,7 @@ VULNERABLE 18 · REVIEW 2 · 의도됨(nosemgrep) 1 · 오류 0
 tools/diagnosis/run-tests.sh
 ```
 
-규칙 시험(`semgrep --test`)에 이어 스캐너 시험(`scanner/tests`, unittest 43개)을 돌린다. 통합 시험은 `Cases.java`의 `ruleid`·`nosemgrep` 주석을 정답으로 읽어 스캐너 결과와 비교한다. semgrep이 없으면 통합 시험만 건너뛴다.
+규칙 시험(`semgrep --test`)에 이어 스캐너 시험(`scanner/tests`, unittest 45개)을 돌린다. 통합 시험은 `Cases.java`의 `ruleid`·`nosemgrep` 주석을 정답으로 읽어 스캐너 결과와 비교한다. semgrep이 없으면 통합 시험만 건너뛴다.
 
 ## Semgrep 로그인과 무관하게 같은 결과
 
