@@ -81,6 +81,23 @@ class MainTest(unittest.TestCase):
         code, _, _ = self.run_main(report(finding("VULNERABLE")), args=("x", "--fail-on", "vulnerable"))
         self.assertEqual(EXIT_FOUND, code)
 
+    def test_fail_on인데_검사한_파일이_없으면_종료_코드_2(self):
+        r = report()
+        r.files_scanned = 0
+        for fail_on in ("vulnerable", "review"):
+            with self.subTest(fail_on=fail_on):
+                code, _, err = self.run_main(r, args=("x", "--fail-on", fail_on))
+                self.assertEqual(EXIT_ERROR, code)
+                self.assertIn("검사한 파일이 없어", err)
+
+    def test_fail_on이_없으면_검사한_파일이_없어도_종료_코드_0(self):
+        r = report()
+        r.files_scanned = 0
+        code, out, err = self.run_main(r)
+        self.assertEqual(EXIT_OK, code)
+        self.assertIn("파일 0개 검사", out)
+        self.assertEqual("", err)
+
 
 if __name__ == "__main__":
     unittest.main()
