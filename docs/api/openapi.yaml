@@ -153,7 +153,7 @@ paths:
   /v1/transfers/{transferId}/approvals:
     servers:
       - url: http://localhost:8081
-        description: 로컬 개발(어드민 API). 게이트웨이(8080)를 거치지 않고 관리망 경로로만 접근한다.
+        description: 로컬 개발(이체 API 내부 포트). 어드민은 게이트웨이(8080)를 거치지 않고 admin-api 전용 통로(F7)로만 접근한다.
     post:
       tags: [approvals]
       operationId: decideApproval
