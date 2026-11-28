@@ -228,6 +228,7 @@ components:
         kid:
           type: string
           maxLength: 64
+          pattern: '^[^\u0000-\u001F\u007F-\u009F]*$'   # 제어 문자 불가
           description: 서명에 쓴 키의 번호. 키를 교체해도 서버가 어떤 키로 검증할지 알 수 있다
           example: acme-rsa-2026-01
         value:
@@ -237,7 +238,9 @@ components:
 
     Security:
       type: object
-      description: 게이트웨이가 검사하는 보안 메타데이터
+      description: |
+        게이트웨이가 검사하는 보안 메타데이터.
+        모든 문자열에 제어 문자(U+0000~U+001F, U+007F~U+009F)와 짝 없는 서로게이트(U+D800~U+DFFF를 홀로 쓴 것)를 쓸 수 없다(E1000).
       required: [crypto_mode, session_id, timestamp, nonce, signatures]
       properties:
         crypto_mode:
@@ -245,6 +248,7 @@ components:
         session_id:
           type: string
           maxLength: 64
+          pattern: '^[^\u0000-\u001F\u007F-\u009F]*$'   # 제어 문자 불가
           description: 키 교환으로 만든 세션 식별자
           example: s-7f3a9c21
         timestamp:
@@ -255,6 +259,7 @@ components:
           type: string
           minLength: 16
           maxLength: 64
+          pattern: '^[^\u0000-\u001F\u007F-\u009F]*$'   # 제어 문자 불가
           description: 요청마다 새로 만드는 일회용 값. 서명 검증 뒤에 Redis에 10분간 보관하며, 이미 쓴 값이면 거부
           example: 9c1e5b7a2d4f6081
         signatures:
@@ -267,6 +272,7 @@ components:
 
     TransferRequest:
       type: object
+      description: 모든 문자열에 제어 문자(U+0000~U+001F, U+007F~U+009F)와 짝 없는 서로게이트를 쓸 수 없다(E1000). NUL은 DB에 저장할 수 없고, 짝 없는 서로게이트는 UTF-8로 바꿀 수 없어 서명한 값과 저장한 값이 달라진다
       required:
         - idempotency_key
         - corporation_id
@@ -281,6 +287,7 @@ components:
           type: string
           minLength: 8
           maxLength: 64
+          pattern: '^[^\u0000-\u001F\u007F-\u009F]*$'   # 제어 문자 불가
           description: 기업 안에서 유일한 요청 번호. 중복 이체 방지에 쓴다
           example: ACME-20261123-000123
         corporation_id:
@@ -312,6 +319,7 @@ components:
         memo:
           type: string
           maxLength: 20
+          pattern: '^[^\u0000-\u001F\u007F-\u009F]*$'   # 제어 문자 불가
         requested_at:
           type: string
           format: date-time

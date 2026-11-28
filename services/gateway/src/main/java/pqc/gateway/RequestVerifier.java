@@ -174,7 +174,21 @@ public final class RequestVerifier {
         if (length < min || length > max) {
             throw format(field + " 길이는 " + min + "~" + max + "자");
         }
+        if (value.codePoints().anyMatch(RequestVerifier::forbidden)) {
+            throw format(field + "에 쓸 수 없는 문자(제어 문자 또는 짝 없는 서로게이트)");
+        }
         return value;
+    }
+
+    /**
+     * 제어 문자(U+0000~U+001F, U+007F~U+009F)와 짝 없는 서로게이트는 모든 문자열에서 거부한다.
+     * NUL은 PostgreSQL이 저장하지 못해 이체 API가 따로 처리하지 않으면 500이 되고, 줄바꿈은 로그·화면을 어지럽힌다.
+     * 짝 없는 서로게이트는 UTF-8로 바꿀 수 없어 이체 API로 넘길 때 '?'로 바뀐다(서명한 값과 넘긴 값이 달라짐).
+     * JCS(RFC 8785)도 이런 문자열을 허용하지 않는 I-JSON을 전제로 한다.
+     */
+    private static boolean forbidden(int codePoint) {
+        return Character.isISOControl(codePoint)
+                || (codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE);
     }
 
     private static Instant instant(JsonNode parent, String field) {

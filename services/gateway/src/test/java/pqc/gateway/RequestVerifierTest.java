@@ -62,6 +62,14 @@ class RequestVerifierTest {
         }
 
         @Test
+        void 한글과_이모지처럼_짝이_맞는_서로게이트는_그대로_통과() {
+            ObjectNode envelope = unsigned(CryptoMode.LEGACY, 1001);
+            transfer(envelope).put("memo", "11월 대금 🙂");
+            VerifiedTransfer v = verifier.verify(sign(envelope, Fixtures.acmeKids()).toString());
+            assertTrue(v.transferJson().contains("\"memo\":\"11월 대금 🙂\""), v.transferJson());
+        }
+
+        @Test
         void nonce는_기업별로_10분_보관() {
             ObjectNode envelope = signed(CryptoMode.HYBRID);
             verifier.verify(envelope.toString());
@@ -299,6 +307,30 @@ class RequestVerifierTest {
             ObjectNode envelope = unsigned(CryptoMode.LEGACY, 1001);
             transfer(envelope).put("memo", "가".repeat(21));
             assertEquals(ResultCode.E1000, reject(sign(envelope, Fixtures.acmeKids())));
+        }
+
+        /** NUL, 줄바꿈, 탭, DEL, C1 제어 문자(U+0085), 짝 없는 서로게이트(앞·뒤). */
+        @ParameterizedTest
+        @ValueSource(strings = {"\u0000", "\n", "\t", "\u007f", "\u0085", "\ud800", "\udc00"})
+        void 서명이_맞아도_문자열에_쓸_수_없는_문자가_있으면_E1000(String bad) {
+            for (String field : new String[] {"memo", "idempotency_key"}) {
+                ObjectNode envelope = unsigned(CryptoMode.LEGACY, 1001);
+                transfer(envelope).put(field, "ACME-" + bad + "-0001");
+                String body = sign(envelope, Fixtures.acmeKids()).toString();
+                GatewayException e = assertThrows(GatewayException.class, () -> verifier.verify(body), field);
+                assertEquals(ResultCode.E1000, e.code(), field);
+                assertTrue(e.getMessage().startsWith(field + "에 쓸 수 없는 문자"), e.getMessage());
+            }
+        }
+
+        @Test
+        void security_항목에_쓸_수_없는_문자가_있으면_서명_확인_전에_E1000() {
+            ObjectNode envelope = signed(CryptoMode.LEGACY);
+            security(envelope).put("nonce", "nonce-\u0000-0000000000");
+            GatewayException e = assertThrows(GatewayException.class, () -> verifier.verify(envelope.toString()));
+            assertEquals(ResultCode.E1000, e.code());
+            assertTrue(e.getMessage().startsWith("nonce에 쓸 수 없는 문자"), e.getMessage());
+            assertTrue(nonces.keys.isEmpty());
         }
 
         @Test
