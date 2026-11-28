@@ -86,4 +86,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.errors:
         return EXIT_ERROR
+    # 판정을 맡겼는데 검사한 파일이 없으면 통과가 아니라 오류다(경로가 바뀌거나 전부 제외돼도 CI가 초록이 되지 않게)
+    if args.fail_on != "none" and report.files_scanned == 0:
+        print("오류: 검사한 파일이 없어 판정할 수 없음", file=sys.stderr)
+        return EXIT_ERROR
     return exit_code(report, args.fail_on)
