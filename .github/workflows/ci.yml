@@ -1,5 +1,6 @@
 # PR과 develop·main 반영 때마다 자동 시험을 돌린다.
-# - java: Gradle wrapper 검증 후 ./gradlew test (암호 모듈 등)
+# - java: Gradle wrapper 검증 후 루트 빌드(settings.gradle.kts에 포함된 모듈)의 ./gradlew test
+# - transfer-api: services/transfer-api를 PostgreSQL과 함께 시험(DB 시험 포함)
 # - diagnosis: 진단 규칙 자동 시험(tools/diagnosis/run-tests.sh)
 # 외부 액션은 태그 대신 커밋 SHA로 고정한다(태그가 바뀌어도 같은 코드가 돈다).
 name: CI
@@ -13,9 +14,11 @@ on:
 permissions:
   contents: read
 
+# PR은 새 커밋이 오면 이전 실행을 취소한다. develop·main은 머지마다 끝까지 돌려야
+# 어느 머지에서 깨졌는지 알 수 있으므로 취소하지 않는다.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   java:
@@ -25,31 +28,77 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Gradle 프로젝트 확인
-        id: gradle
-        run: |
-          if [ -f gradlew ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "gradlew 없음: Java 시험 건너뜀"; fi
-
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        if: steps.gradle.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: '21'
 
       # gradle-wrapper.jar가 공식 배포본과 같은지 확인한 뒤 Gradle 캐시를 설정한다
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        if: steps.gradle.outputs.present == 'true'
 
       - name: 테스트
-        if: steps.gradle.outputs.present == 'true'
         run: ./gradlew test --console=plain
 
+      - name: 건너뛴 시험이 없는지 확인
+        run: python3 .github/scripts/check_no_skipped_tests.py '**/build/test-results/test/TEST-*.xml'
+
       - name: 테스트 결과 보관
-        if: always() && steps.gradle.outputs.present == 'true'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: java-test-reports
           path: '**/build/reports/tests/test/'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # services/transfer-api는 루트와 따로 된 Gradle 프로젝트라 위 java 작업에서 빌드되지 않는다.
+  # DB 시험이 돌도록 개발용 DB(services/transfer-api/dev/compose.yml)와 같은 조건의 PostgreSQL을 붙인다.
+  transfer-api:
+    name: transfer-api 빌드·테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pqc
+          POSTGRES_USER: pqc_app
+          POSTGRES_PASSWORD: ci-only-not-secret   # CI에서 만들고 버리는 DB. 실제 비밀번호가 아니다(T9)
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pqc_app -d pqc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_PASSWORD: ci-only-not-secret   # 있으면 DB 시험이 켜진다(@EnabledIfEnvironmentVariable)
+    defaults:
+      run:
+        working-directory: services/transfer-api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: 테스트
+        run: ./gradlew test --console=plain
+
+      # DB 시험은 POSTGRES_PASSWORD가 없으면 실패가 아니라 건너뜀으로 끝나므로, 건너뛴 시험이 있으면 실패시킨다.
+      - name: 건너뛴 시험이 없는지 확인
+        run: python3 ../../.github/scripts/check_no_skipped_tests.py 'build/test-results/test/TEST-*.xml'
+
+      - name: 테스트 결과 보관
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: transfer-api-test-reports
+          path: services/transfer-api/build/reports/tests/test/
           if-no-files-found: ignore
           retention-days: 7
 
