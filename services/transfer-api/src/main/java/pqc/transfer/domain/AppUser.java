@@ -54,4 +54,8 @@ public class AppUser {
 	public boolean isActive() {
 		return active;
 	}
+
+	public void deactivate() {
+		this.active = false;
+	}
 }

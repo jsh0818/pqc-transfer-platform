@@ -65,9 +65,77 @@ class ApprovalServiceTest {
 
 	@Test
 	void 만든_사람은_자기_이체를_승인할_수_없다() {
+		// CHECKER 역할인 사람이 직접 만든 이체. 자격은 있지만 자기 이체라서 막힌다(R4).
+		Account account = accounts.findById(transfers.findById(transferId).orElseThrow().getFromAccountId()).orElseThrow();
+		long ownId = transfers.save(new TransferRequest("KEY-OWN-" + System.nanoTime(), account.getId(), "088",
+				"1109876543210", 15_000_000, TransferStatus.PENDING_APPROVAL, checker1Id, "hash", "LEGACY")).getId();
+		ApprovalException e = assertThrows(ApprovalException.class,
+				() -> service.decide(ownId, checker1Id, Decision.APPROVED, null));
+		assertEquals(ErrorCode.SAME_USER, e.getErrorCode());
+	}
+
+	@Test
+	void CHECKER_역할이_아니면_결재할_수_없다() {
 		ApprovalException e = assertThrows(ApprovalException.class,
 				() -> service.decide(transferId, makerId, Decision.APPROVED, null));
-		assertEquals(ErrorCode.SAME_USER, e.getErrorCode());
+		assertEquals(ErrorCode.NOT_AUTHORIZED, e.getErrorCode());
+	}
+
+	@Test
+	void 비활성_계정은_결재할_수_없다() {
+		AppUser checker = users.findById(checker1Id).orElseThrow();
+		checker.deactivate();
+		users.saveAndFlush(checker);
+		ApprovalException e = assertThrows(ApprovalException.class,
+				() -> service.decide(transferId, checker1Id, Decision.APPROVED, null));
+		assertEquals(ErrorCode.NOT_AUTHORIZED, e.getErrorCode());
+	}
+
+	@Test
+	void 없는_사용자는_결재할_수_없다() {
+		ApprovalException e = assertThrows(ApprovalException.class,
+				() -> service.decide(transferId, 999_999_999L, Decision.APPROVED, null));
+		assertEquals(ErrorCode.NOT_AUTHORIZED, e.getErrorCode());
+	}
+
+	@Test
+	void 다른_기업_결재자에게는_이체가_없는_것으로_답한다() {
+		Corporation other = corporations.save(new Corporation("다른기업", "111-11-11111", "LEGACY", "LEGACY"));
+		long outsiderId = users.save(new AppUser(other.getId(), "outsider", UserRole.CHECKER)).getId();
+		ApprovalException e = assertThrows(ApprovalException.class,
+				() -> service.decide(transferId, outsiderId, Decision.APPROVED, null));
+		assertEquals(ErrorCode.NOT_FOUND, e.getErrorCode());
+	}
+
+	@Test
+	void 거절에는_사유가_있어야_한다() {
+		for (String reason : new String[] { null, "", "   " }) {
+			ApprovalException e = assertThrows(ApprovalException.class,
+					() -> service.decide(transferId, checker1Id, Decision.REJECTED, reason));
+			assertEquals(ErrorCode.INVALID_REQUEST, e.getErrorCode());
+		}
+		assertEquals(TransferStatus.PENDING_APPROVAL, transfers.findById(transferId).orElseThrow().getStatus());
+	}
+
+	@Test
+	void 정책에_없는_금액도_최소_1명의_승인이_필요하다() {
+		Account account = accounts.findById(transfers.findById(transferId).orElseThrow().getFromAccountId()).orElseThrow();
+		long smallId = transfers.save(new TransferRequest("KEY-SMALL-" + System.nanoTime(), account.getId(), "088",
+				"1109876543210", 5_000_000, TransferStatus.PENDING_APPROVAL, makerId, "hash", "LEGACY")).getId();
+		ApprovalResult result = service.decide(smallId, checker1Id, Decision.APPROVED, null);
+		assertEquals(1, result.requiredApprovals());
+		assertEquals(TransferStatus.APPROVED, result.status());
+	}
+
+	@Test
+	void 승인이_끝난_뒤의_결재는_막힌다() {
+		service.decide(transferId, checker1Id, Decision.APPROVED, null);
+		service.decide(transferId, checker2Id, Decision.APPROVED, null);
+		long checker3Id = users.save(new AppUser(
+				users.findById(checker1Id).orElseThrow().getCorporationId(), "checker3", UserRole.CHECKER)).getId();
+		ApprovalException e = assertThrows(ApprovalException.class,
+				() -> service.decide(transferId, checker3Id, Decision.APPROVED, null));
+		assertEquals(ErrorCode.ALREADY_PROCESSED, e.getErrorCode());
 	}
 
 	@Test
@@ -86,7 +154,7 @@ class ApprovalServiceTest {
 		service.decide(transferId, checker1Id, Decision.APPROVED, null);
 		ApprovalException e = assertThrows(ApprovalException.class,
 				() -> service.decide(transferId, checker1Id, Decision.APPROVED, null));
-		assertEquals(ErrorCode.ALREADY_PROCESSED, e.getErrorCode());
+		assertEquals(ErrorCode.DUPLICATE_APPROVER, e.getErrorCode());
 	}
 
 	@Test
