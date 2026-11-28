@@ -25,3 +25,18 @@ docker compose -f dev\compose.yml up -d
 ## 테스트
 
 `.\gradlew.bat test`. DB가 필요한 테스트는 `POSTGRES_PASSWORD` 환경변수가 있을 때만 실행된다(위 1, 2번을 먼저).
+
+## 결재 API
+
+`POST /v1/transfers/{transferId}/approvals` (명세: `docs/api/openapi.yaml`의 `decideApproval`)
+
+- 결재자 ID는 W7(JWT) 전까지 개발용 헤더 `X-Dev-User-Id`로 보낸다. W7에서 지운다.
+- 결재 자격(활성 `CHECKER`, 출금 계좌와 같은 기업)은 이 헤더를 믿지 않고 DB로 확인한다.
+- 오류는 `{"result_code": "...", "message": "..."}`로 답한다. 코드와 HTTP 상태는 `ErrorCode`, 명세의 표와 같다.
+
+```powershell
+# 예: 사용자 7이 이체 52001을 승인 (DB에 해당 이체와 사용자가 있어야 한다)
+Invoke-RestMethod -Method Post -Uri http://localhost:8081/v1/transfers/52001/approvals `
+  -Headers @{ "X-Dev-User-Id" = "7" } -ContentType "application/json" `
+  -Body '{"decision":"APPROVED"}'
+```
