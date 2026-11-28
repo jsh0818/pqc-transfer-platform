@@ -1,6 +1,7 @@
 package pqc.gateway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -12,8 +13,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import java.io.IOException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -52,13 +56,43 @@ class TransferApiClientTest {
     }
 
     @Test
-    void 이체_API의_4xx_5xx는_예외가_아니라_그대로_돌려준다() {
+    void 이체_API의_4xx_JSON은_예외가_아니라_그대로_돌려준다() {
         server.expect(requestTo("http://transfer-api:8081/v1/transfers"))
                 .andRespond(withStatus(HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"result_code\":\"E2007\"}"));
         var response = client.forward(transfer);
         assertEquals(409, response.getStatusCode().value());
+        assertEquals(MediaType.APPLICATION_JSON, response.getHeaders().getContentType());
         assertEquals("{\"result_code\":\"E2007\"}", response.getBody());
+    }
+
+    @Test
+    void problem_json처럼_json으로_끝나는_형식도_그대로_돌려준다() {
+        server.expect(requestTo("http://transfer-api:8081/v1/transfers"))
+                .andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                        .body("{\"result_code\":\"E2002\"}"));
+        var response = client.forward(transfer);
+        assertEquals(422, response.getStatusCode().value());
+        assertEquals(MediaType.APPLICATION_PROBLEM_JSON, response.getHeaders().getContentType());
+    }
+
+    /** 5xx, 3xx, JSON이 아닌 응답, 형식 없는 응답은 내부 내용이 섞일 수 있어 넘기지 않는다. */
+    @ParameterizedTest
+    @CsvSource({
+            "500, application/json",
+            "503, application/json",
+            "302, application/json",
+            "400, text/html",
+            "201, text/plain",
+            "201, ''",
+    })
+    void 넘기면_안_되는_응답은_E9000(int status, String type) {
+        var response = withStatus(HttpStatusCode.valueOf(status)).body("{\"trace\":\"at pqc.transfer...\"}");
+        server.expect(requestTo("http://transfer-api:8081/v1/transfers"))
+                .andRespond(type.isEmpty() ? response : response.contentType(MediaType.parseMediaType(type)));
+        GatewayException e = assertThrows(GatewayException.class, () -> client.forward(transfer));
+        assertEquals(ResultCode.E9000, e.code());
+        assertFalse(e.getMessage().contains("trace"), e.getMessage());
     }
 
     @Test
