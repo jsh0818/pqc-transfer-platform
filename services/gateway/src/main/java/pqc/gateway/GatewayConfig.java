@@ -32,8 +32,8 @@ public class GatewayConfig {
     }
 
     @Bean
-    CorporationDirectory corporationDirectory(GatewayProperties properties) {
-        return CorporationDirectory.of(properties);
+    CorporationDirectory corporationDirectory(GatewayProperties properties, KeyProvider keys) {
+        return CorporationDirectory.of(properties, keys);
     }
 
     @Bean
