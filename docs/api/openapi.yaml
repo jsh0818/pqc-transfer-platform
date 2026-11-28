@@ -34,9 +34,9 @@ info:
     | 200 | E2001 (중복 요청, 기존 결과 반환) |
     | 400 | E1000 (형식 오류) |
     | 401 | E1001, E1002 |
-    | 403 | E1003, E2006 |
+    | 403 | E1003, E2006, E2010 |
     | 404 | E2008 |
-    | 409 | E2007 |
+    | 409 | E2007, E2009 |
     | 422 | E2002, E2004, E2005 |
     | 500 | E9000 |
 servers:
@@ -161,6 +161,10 @@ paths:
       description: |
         이체를 만든 사람(maker)과 승인하는 사람(checker)은 달라야 한다(규칙 R4).
         같은 사람이면 `E2006`으로 거부한다. 필요한 승인 수가 모두 채워지면 `APPROVED`가 되어 원장에 기록된다.
+        결재자는 활성 상태의 `CHECKER`이고 출금 계좌와 같은 기업 소속이어야 한다. 역할이나 상태가 맞지 않으면 `E2010`이다.
+        다른 기업의 결재자에게는 이체가 있는지 알려 주지 않으려고 `E2008`(404)로 답한다.
+        같은 사람이 같은 이체를 두 번 결재하면 `E2009`, 이미 승인·거절이 끝난 이체이면 `E2007`이다.
+        거절(`REJECTED`)에는 `reason`이 필수이고, 없으면 `E1000`이다.
       security:
         - bearerAuth: []
       parameters:
@@ -185,6 +189,8 @@ paths:
                 status: APPROVED
                 approvals_done: 1
                 approvals_required: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -392,11 +398,14 @@ components:
             - E2006
             - E2007
             - E2008
+            - E2009
+            - E2010
             - E9000
           description: |
             E1000 형식 오류, E1001 서명 검증 실패, E1002 재전송 의심, E1003 허용되지 않은 암호 모드,
             E2002 잔액 부족, E2004 한도 초과, E2005 계좌 상태 이상, E2006 작성자와 승인자가 같음,
-            E2007 이미 처리된 이체(상태 불일치), E2008 이체를 찾을 수 없음, E9000 서버 내부 오류.
+            E2007 이미 처리된 이체(상태 불일치), E2008 이체를 찾을 수 없음, E2009 같은 사람이 이미 결재함,
+            E2010 결재 권한 없음(역할·상태), E9000 서버 내부 오류.
             E1001~E1003의 message는 원인을 알려 주지 않고, 상세 원인은 내부 감사 로그에만 남긴다.
         message:
           type: string
@@ -443,7 +452,7 @@ components:
             result_code: E2008
             message: 이체를 찾을 수 없습니다
     Conflict:
-      description: 이미 처리된 이체라 결재할 수 없음
+      description: 이미 처리된 이체라 결재할 수 없음(E2007) 또는 같은 사람이 이미 결재함(E2009)
       content:
         application/json:
           schema:
