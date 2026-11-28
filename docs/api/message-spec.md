@@ -34,12 +34,15 @@
 
 ### 2-1-1. 상태 조회 요청
 
-상태 조회도 같은 `security` 객체로 서명하고, 본문의 `inquiry` 객체(`transfer_id`, `corporation_id`)를 이체의 `transfer` 자리에 둔다. 서명 대상은 `security`(서명 제외)와 `inquiry`를 JCS로 정규화한 바이트다. 검증 순서(5장)도 같다.
+상태 조회도 같은 `security` 객체로 서명하고, 본문의 `inquiry` 객체(`transfer_id`, `corporation_id`)를 이체의 `transfer` 자리에 둔다. 서명 대상은 `security`(서명 제외)와 `inquiry`를 JCS로 정규화한 바이트다. 서명 바이트는 `{"security": …, "inquiry": …}`처럼 키 이름을 포함한 한 객체라서, 조회용 서명을 이체 요청에 갖다 쓸 수 없다. 검증 순서(5장)는 1~5단계까지 같고, 그 뒤에 경로와 본문의 `transfer_id` 비교(`E1000`) → 소유 확인(`E2008`)을 한다. 6~8단계(멱등성 키, 잔액·한도, 원장 기록)는 조회에 해당하지 않는다.
 
 - `POST /v1/transfers/{transferId}/status`를 쓴다. 조회인데 GET이 아닌 이유는 HYBRID 서명이 헤더 한도에 가깝기 때문이다(위 안내).
 - `inquiry.transfer_id`는 경로의 `transferId`와 같아야 한다. 서명 범위에 들어가므로 경로만 바꿔 다른 이체를 묻는 것을 막는다. 다르면 `E1000`.
 - 서명한 기업(`corporation_id`)의 이체만 조회된다. 다른 기업의 이체와 없는 이체는 구분 없이 `E2008`(404)로 답해 존재 여부를 알려주지 않는다.
-- 어드민은 이 API를 쓰지 않는다. 어드민은 결재 API(8081)와 관리망 경로로 본다.
+- 응답의 `0000`은 "조회 성공"이다. 이체의 최종 결과(`POSTED`, `REJECTED`, `FAILED` 등)는 `status`로 판단한다.
+- 구현 참고: `transfer_request`에는 `corporation_id`가 없으므로 소유 확인은 `from_account_id → account.corporation_id`로 이어서 한다. 없는 이체와 다른 기업 이체를 쿼리 하나로 판단해야 응답 시간 차이로 존재 여부가 새지 않는다.
+- 세션 유효기간: 조회는 이체를 보내고 한참 뒤에 올 수 있다. 세션이 만료되면 키 교환을 다시 해서 새 `session_id`를 쓴다. 만료 시간은 W3 세션 API에서 정한다.
+- 어드민은 이 API를 쓰지 않는다. 어드민 조회 API는 어드민 화면을 만들 때(W7) 추가한다(결재 API는 승인·거절 POST뿐이다).
 
 ### 2-2. 이체 내용 (`transfer` 객체)
 
